@@ -1,0 +1,10 @@
+// One ambulance drawing, used for the map marker (the CSS cursor in globals.css uses the same picture).
+// It faces right. Flip it with scaleX(-1) when the vehicle drives west.
+
+const PLAIN = `<svg xmlns='http://www.w3.org/2000/svg' width='40' height='32' viewBox='0 -4 40 32'><rect x='1.5' y='5.5' width='24' height='15.5' rx='3' fill='#fff' stroke='#1b2430' stroke-width='1.5'/><path d='M25.5 9.5h7.4l5.1 5.2V21H25.5z' fill='#fff' stroke='#1b2430' stroke-width='1.5' stroke-linejoin='round'/><path d='M28.6 11.3h4l3 3.4h-7z' fill='#9fd3ff'/><rect x='1.5' y='15.2' width='24' height='3' fill='#d62839'/><path d='M13.5 7.6v5.4M10.8 10.3h5.4' stroke='#d62839' stroke-width='2.2' stroke-linecap='round'/><rect x='10.5' y='1.6' width='6' height='3.6' rx='1.2' fill='#1f6feb' stroke='#1b2430' stroke-width='1'/><circle cx='9' cy='22' r='3.4' fill='#1b2430'/><circle cx='31' cy='22' r='3.4' fill='#1b2430'/><circle cx='9' cy='22' r='1.3' fill='#cfd6df'/><circle cx='31' cy='22' r='1.3' fill='#cfd6df'/></svg>`;
+
+const LIT = `<svg xmlns='http://www.w3.org/2000/svg' width='40' height='32' viewBox='0 -4 40 32'><circle cx='13.5' cy='3.2' r='5.2' fill='#ff3347' fill-opacity='.28'/><rect x='1.5' y='5.5' width='24' height='15.5' rx='3' fill='#fff' stroke='#1b2430' stroke-width='1.5'/><path d='M25.5 9.5h7.4l5.1 5.2V21H25.5z' fill='#fff' stroke='#1b2430' stroke-width='1.5' stroke-linejoin='round'/><path d='M28.6 11.3h4l3 3.4h-7z' fill='#9fd3ff'/><rect x='1.5' y='15.2' width='24' height='3' fill='#d62839'/><path d='M13.5 7.6v5.4M10.8 10.3h5.4' stroke='#d62839' stroke-width='2.2' stroke-linecap='round'/><rect x='10.5' y='1.6' width='6' height='3.6' rx='1.2' fill='#ff3347' stroke='#1b2430' stroke-width='1'/><path d='M6.5 1.2 4.2 .2M20.5 1.2l2.3-1' stroke='#ff3347' stroke-width='1.3' stroke-linecap='round'/><circle cx='9' cy='22' r='3.4' fill='#1b2430'/><circle cx='31' cy='22' r='3.4' fill='#1b2430'/><circle cx='9' cy='22' r='1.3' fill='#cfd6df'/><circle cx='31' cy='22' r='1.3' fill='#cfd6df'/></svg>`;
+
+export function ambulanceSvg(lit = false): string {
+  return lit ? LIT : PLAIN;
+}

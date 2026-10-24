@@ -1,0 +1,1700 @@
+﻿
+===== FILE: convex\ambulanceSim.ts =====
+
+import { mutation } from "./_generated/server";
+import { v } from "convex/values";
+import { distanceKm, estimateEtaSeconds } from "./lib";
+
+/**
+ * Moves an ambulance a step closer to its current target (patient location
+ * while en_route_to_patient, hospital location while en_route_to_hospital).
+ * Called repeatedly on a client-side interval to simulate live GPS movement
+ * (Convex doesn't run free-running background loops, so the tick is driven
+ * by the UI calling this mutation every N seconds).
+ */
+export const tickAmbulance = mutation({
+  args: { ambulanceId: v.id("ambulances") },
+  handler: async (ctx, args) => {
+    const ambulance = await ctx.db.get(args.ambulanceId);
+    if (!ambulance || !ambulance.currentSessionId) return null;
+
+    const session = await ctx.db.get(ambulance.currentSessionId);
+    if (!session) return null;
+
+    let targetLat: number;
+    let targetLng: number;
+
+    if (ambulance.status === "en_route_to_patient") {
+      targetLat = session.incidentLat;
+      targetLng = session.incidentLng;
+    } else if (ambulance.status === "en_route_to_hospital") {
+      if (!session.assignedHospitalId) return null;
+      const hospital = await ctx.db.get(session.assignedHospitalId);
+      if (!hospital) return null;
+      targetLat = hospital.lat;
+      targetLng = hospital.lng;
+    } else {
+      return null; // idle / with_patient / at_hospital â€” nothing to move
+    }
+
+    const remainingKm = distanceKm(ambulance.lat, ambulance.lng, targetLat, targetLng);
+
+    // Move ~12% of the remaining distance per tick â€” fast enough to be a
+    // satisfying demo, slow enough to watch it travel across the map.
+    const stepFraction = 0.12;
+    const arrivalThresholdKm = 0.05;
+
+    if (remainingKm <= arrivalThresholdKm) {
+      // Arrived at current target.
+      await ctx.db.patch(args.ambulanceId, { lat: targetLat, lng: targetLng });
+
+      if (ambulance.status === "en_route_to_patient") {
+        await ctx.db.patch(args.ambulanceId, { status: "with_patient" });
+        await ctx.db.patch(ambulance.currentSessionId, { status: "patient_picked_up", etaSeconds: 0 });
+        await ctx.db.insert("sessionEvents", {
+          sessionId: ambulance.currentSessionId,
+          actor: "Ambulance",
+          message: `${ambulance.vehicleNumber} has reached the patient.`,
+          createdAt: Date.now(),
+        });
+      } else {
+        await ctx.db.patch(args.ambulanceId, { status: "at_hospital" });
+        await ctx.db.patch(ambulance.currentSessionId, { status: "arrived_at_hospital", etaSeconds: 0 });
+        await ctx.db.insert("sessionEvents", {
+          sessionId: ambulance.currentSessionId,
+          actor: "Ambulance",
+          message: `${ambulance.vehicleNumber} has arrived at the hospital.`,
+          createdAt: Date.now(),
+        });
+      }
+      return { arrived: true };
+    }
+
+    const newLat = ambulance.lat + (targetLat - ambulance.lat) * stepFraction;
+    const newLng = ambulance.lng + (targetLng - ambulance.lng) * stepFraction;
+    const newRemainingKm = distanceKm(newLat, newLng, targetLat, targetLng);
+    const newEta = estimateEtaSeconds(newRemainingKm);
+
+    await ctx.db.patch(args.ambulanceId, { lat: newLat, lng: newLng });
+    await ctx.db.patch(ambulance.currentSessionId, { etaSeconds: newEta });
+
+    return { arrived: false, lat: newLat, lng: newLng, etaSeconds: newEta };
+  },
+});
+
+/** Called once the ambulance has picked up the patient, to send it onward to the hospital. */
+export const departForHospital = mutation({
+  args: { ambulanceId: v.id("ambulances") },
+  handler: async (ctx, args) => {
+    const ambulance = await ctx.db.get(args.ambulanceId);
+    if (!ambulance || !ambulance.currentSessionId) throw new Error("Ambulance not on an active session");
+
+    await ctx.db.patch(args.ambulanceId, { status: "en_route_to_hospital" });
+    await ctx.db.patch(ambulance.currentSessionId, { status: "en_route_to_hospital" });
+    await ctx.db.insert("sessionEvents", {
+      sessionId: ambulance.currentSessionId,
+      actor: "Ambulance",
+      message: `${ambulance.vehicleNumber} departing for hospital with patient on board.`,
+      createdAt: Date.now(),
+    });
+  },
+});
+
+/** Frees the ambulance back to idle status once the session is closed out. */
+export const releaseAmbulance = mutation({
+  args: { ambulanceId: v.id("ambulances") },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.ambulanceId, {
+      status: "idle",
+      currentSessionId: undefined,
+    });
+  },
+});
+
+
+===== FILE: convex\directory.ts =====
+
+import { query } from "./_generated/server";
+import { v } from "convex/values";
+
+export const listAmbulances = query({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.db.query("ambulances").collect();
+  },
+});
+
+export const getAmbulance = query({
+  args: { ambulanceId: v.id("ambulances") },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.ambulanceId);
+  },
+});
+
+export const listHospitals = query({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.db.query("hospitals").collect();
+  },
+});
+
+export const getHospital = query({
+  args: { hospitalId: v.id("hospitals") },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.hospitalId);
+  },
+});
+
+export const listDoctorsForHospital = query({
+  args: { hospitalId: v.id("hospitals") },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("doctors")
+      .withIndex("by_hospital", (q) => q.eq("hospitalId", args.hospitalId))
+      .collect();
+  },
+});
+
+export const getDoctor = query({
+  args: { doctorId: v.id("doctors") },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.doctorId);
+  },
+});
+
+
+===== FILE: convex\dispatch.ts =====
+
+import { mutation } from "./_generated/server";
+import { v } from "convex/values";
+import { distanceKm, estimateEtaSeconds, requiredFacilitiesFor } from "./lib";
+
+// ---------------------------------------------------------------------
+// Dispatch the nearest idle ambulance to the incident location.
+// Pure proximity â€” every ambulance can reach a scene, so this stays simple.
+// ---------------------------------------------------------------------
+export const dispatchNearestAmbulance = mutation({
+  args: { sessionId: v.id("sessions") },
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) throw new Error("Session not found");
+
+    const idleAmbulances = await ctx.db
+      .query("ambulances")
+      .withIndex("by_status", (q) => q.eq("status", "idle"))
+      .collect();
+
+    if (idleAmbulances.length === 0) {
+      throw new Error("No idle ambulances available right now.");
+    }
+
+    let nearest = idleAmbulances[0];
+    let nearestDist = distanceKm(
+      session.incidentLat,
+      session.incidentLng,
+      nearest.lat,
+      nearest.lng,
+    );
+    for (const amb of idleAmbulances.slice(1)) {
+      const d = distanceKm(session.incidentLat, session.incidentLng, amb.lat, amb.lng);
+      if (d < nearestDist) {
+        nearest = amb;
+        nearestDist = d;
+      }
+    }
+
+    const etaSeconds = estimateEtaSeconds(nearestDist);
+
+    await ctx.db.patch(nearest._id, {
+      status: "en_route_to_patient",
+      currentSessionId: args.sessionId,
+    });
+
+    await ctx.db.patch(args.sessionId, {
+      assignedAmbulanceId: nearest._id,
+      etaSeconds,
+      status: "ambulance_dispatched",
+    });
+
+    await ctx.db.insert("sessionEvents", {
+      sessionId: args.sessionId,
+      actor: "Dispatch Agent",
+      message: `Ambulance ${nearest.vehicleNumber} (${nearest.driverName}) dispatched â€” ${nearestDist.toFixed(1)} km away, ETA ~${Math.round(etaSeconds / 60)} min.`,
+      createdAt: Date.now(),
+    });
+
+    return { ambulanceId: nearest._id, distanceKm: nearestDist, etaSeconds };
+  },
+});
+
+// ---------------------------------------------------------------------
+// Assign the best hospital based on CONDITION MATCH first, distance second.
+// Requires extractedSymptoms to already be on the session (post-intake).
+// ---------------------------------------------------------------------
+export const assignBestHospital = mutation({
+  args: { sessionId: v.id("sessions") },
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) throw new Error("Session not found");
+
+    const required = requiredFacilitiesFor(session.extractedSymptoms ?? []);
+    const allHospitals = await ctx.db.query("hospitals").collect();
+
+    // Score: hospitals that match ALL required facilities AND have a free
+    // bed are eligible. Among eligible, pick nearest. If none match fully,
+    // fall back to "most facilities matched, then nearest" so we never
+    // leave a patient unassigned.
+    const withScore = allHospitals
+      .filter((h) => h.availableBeds > 0)
+      .map((h) => {
+        const matched = required.filter((f) => h.facilities.includes(f)).length;
+        const dist = distanceKm(session.incidentLat, session.incidentLng, h.lat, h.lng);
+        return { hospital: h, matched, fullMatch: matched === required.length, dist };
+      })
+      .sort((a, b) => {
+        if (a.fullMatch !== b.fullMatch) return a.fullMatch ? -1 : 1;
+        if (b.matched !== a.matched) return b.matched - a.matched;
+        return a.dist - b.dist;
+      });
+
+    if (withScore.length === 0) {
+      throw new Error("No hospital with available beds found.");
+    }
+
+    const best = withScore[0];
+
+    await ctx.db.patch(args.sessionId, {
+      assignedHospitalId: best.hospital._id,
+    });
+
+    await ctx.db.patch(best.hospital._id, {
+      availableBeds: best.hospital.availableBeds - 1,
+    });
+
+    await ctx.db.insert("sessionEvents", {
+      sessionId: args.sessionId,
+      actor: "Dispatch Agent",
+      message: `Hospital selected: ${best.hospital.name} â€” matched ${best.matched}/${required.length} required facilities (${required.join(", ")}), ${best.dist.toFixed(1)} km from scene.`,
+      createdAt: Date.now(),
+    });
+
+    return { hospitalId: best.hospital._id, matched: best.matched, required };
+  },
+});
+
+
+===== FILE: convex\intakeAgent.ts =====
+
+/// <reference types="node" />
+"use node";
+
+import { action } from "./_generated/server";
+import { v } from "convex/values";
+import { internal } from "./_generated/api";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { FIRST_AID_STEPS } from "./lib";
+
+const KNOWN_SYMPTOMS = Object.keys(FIRST_AID_STEPS);
+
+function getClient() {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "GEMINI_API_KEY is not set. Run `npx convex env set GEMINI_API_KEY <your-key>`.",
+    );
+  }
+  return new GoogleGenerativeAI(apiKey);
+}
+
+export const processIntakeTranscript = action({
+  args: {
+    sessionId: v.id("sessions"),
+    transcript: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const genAI = getClient();
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
+
+    const prompt = `You are an emergency intake triage assistant listening to a live 911/108-style emergency call transcript.
+
+Known symptom keywords you may use (ONLY use these exact strings, nothing else):
+${KNOWN_SYMPTOMS.map((s) => `- ${s}`).join("\n")}
+
+Transcript so far:
+"""
+${args.transcript}
+"""
+
+Return ONLY a JSON array of matching symptom keywords from the list above that are clearly indicated by the transcript. If none are clearly indicated, return an empty array. Do not include any explanation, markdown, or text outside the JSON array.
+Example output: ["bleeding", "unconscious"]`;
+
+    let extractedSymptoms: string[] = [];
+    try {
+      const result = await model.generateContent(prompt);
+      const text = result.response.text().trim();
+      const cleaned = text.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(cleaned);
+      if (Array.isArray(parsed)) {
+        extractedSymptoms = parsed.filter((s) => KNOWN_SYMPTOMS.includes(s));
+      }
+    } catch (err) {
+      console.error("Gemini intake extraction failed, falling back to keyword match:", err);
+      const lower = args.transcript.toLowerCase();
+      extractedSymptoms = KNOWN_SYMPTOMS.filter((k) => lower.includes(k));
+    }
+
+    const firstAidGiven = Array.from(
+      new Set(extractedSymptoms.flatMap((s) => FIRST_AID_STEPS[s] ?? [])),
+    );
+
+    await ctx.runMutation(internal.sessions.applyIntakeResult, {
+      sessionId: args.sessionId,
+      transcript: args.transcript,
+      extractedSymptoms,
+      firstAidGiven,
+    });
+
+    return { extractedSymptoms, firstAidGiven };
+  },
+});
+
+
+===== FILE: convex\lib.ts =====
+
+// Shared domain helpers used by multiple Convex functions.
+
+/** Haversine distance in kilometers between two lat/lng points. */
+export function distanceKm(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number,
+): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+/** Rough ETA in seconds assuming average urban ambulance speed (with siren). */
+export function estimateEtaSeconds(km: number): number {
+  const avgSpeedKmh = 40;
+  return Math.round((km / avgSpeedKmh) * 3600);
+}
+
+/**
+ * Maps extracted symptom keywords to the hospital facility tags required
+ * to treat them. This is intentionally simple/rule-based (not LLM) because
+ * facility *requirements* are a known, stable mapping â€” not a judgment call.
+ */
+const SYMPTOM_TO_FACILITY: Record<string, string[]> = {
+  bleeding: ["trauma"],
+  "heavy bleeding": ["trauma", "blood_bank"],
+  fracture: ["trauma", "orthopedic"],
+  unconscious: ["trauma", "neuro"],
+  "head injury": ["neuro", "trauma"],
+  "not breathing": ["icu", "ventilator"],
+  drowning: ["icu", "ventilator"],
+  "chest pain": ["cardiac"],
+  "heart attack": ["cardiac", "icu"],
+  burns: ["burns_unit"],
+  seizure: ["neuro"],
+  "spinal injury": ["neuro", "trauma"],
+  pregnant: ["maternity"],
+  "snake bite": ["icu", "antivenom"],
+  poisoning: ["icu"],
+  stroke: ["neuro", "icu"],
+};
+
+export function requiredFacilitiesFor(symptoms: string[]): string[] {
+  const set = new Set<string>();
+  for (const symptom of symptoms) {
+    const key = symptom.toLowerCase().trim();
+    const mapped = SYMPTOM_TO_FACILITY[key];
+    if (mapped) mapped.forEach((f) => set.add(f));
+  }
+  // Always sensible defaults if nothing specific matched.
+  if (set.size === 0) set.add("trauma");
+  return Array.from(set);
+}
+
+/**
+ * First-aid instructions keyed by symptom keyword â€” shown to the bystander
+ * immediately after intent extraction. Deliberately simple, widely-accepted
+ * first aid steps only (not medical advice beyond basic stabilization).
+ */
+export const FIRST_AID_STEPS: Record<string, string[]> = {
+  bleeding: [
+    "Apply firm, direct pressure on the wound with a clean cloth.",
+    "Do not remove the cloth if it soaks through â€” add another layer on top.",
+    "Keep the injured area raised above heart level if possible.",
+  ],
+  "heavy bleeding": [
+    "Apply firm direct pressure with both hands using a clean cloth.",
+    "Keep pressure constant â€” do not check the wound repeatedly.",
+    "If bleeding doesn't stop and a limb is involved, prepare to apply a tourniquet above the wound as a last resort.",
+  ],
+  "not breathing": [
+    "Tilt the head back gently and check the airway is clear.",
+    "Begin CPR: 30 chest compressions, then 2 rescue breaths.",
+    "Push hard and fast in the center of the chest, about 2 inches deep.",
+    "Continue cycles until help arrives or the person starts breathing.",
+  ],
+  drowning: [
+    "Move the person to dry, flat ground.",
+    "Check if they are breathing â€” if not, begin CPR immediately.",
+    "Turn the head to the side if they vomit water.",
+  ],
+  unconscious: [
+    "Check if the person is breathing normally.",
+    "If breathing, place them in the recovery position on their side.",
+    "Do not give them food or water.",
+  ],
+  fracture: [
+    "Do not try to straighten or move the injured limb.",
+    "Support the area above and below the injury to keep it still.",
+    "Apply a cold pack wrapped in cloth to reduce swelling if available.",
+  ],
+  "chest pain": [
+    "Help the person sit in a comfortable, upright position.",
+    "Loosen any tight clothing around the neck and chest.",
+    "Keep them calm and still â€” do not let them walk around.",
+  ],
+  burns: [
+    "Cool the burn under running water for at least 10 minutes.",
+    "Do not apply ice, butter, or ointments.",
+    "Cover loosely with a clean, non-stick cloth.",
+  ],
+  seizure: [
+    "Clear the area of anything that could cause injury.",
+    "Do not hold the person down or put anything in their mouth.",
+    "Turn them on their side once the seizure stops.",
+  ],
+};
+
+
+===== FILE: convex\patients.ts =====
+
+import { mutation, query } from "./_generated/server";
+import { v } from "convex/values";
+
+export const lookupByPhone = query({
+  args: { phone: v.string() },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("patients")
+      .withIndex("by_phone", (q) => q.eq("phone", args.phone))
+      .first();
+  },
+});
+
+export const lookupByGovtId = query({
+  args: { govtId: v.string() },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("patients")
+      .withIndex("by_govtId", (q) => q.eq("govtId", args.govtId))
+      .first();
+  },
+});
+
+export const lookupByVehicleNumber = query({
+  args: { vehicleNumber: v.string() },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("patients")
+      .withIndex("by_vehicleNumber", (q) => q.eq("vehicleNumber", args.vehicleNumber))
+      .first();
+  },
+});
+
+/**
+ * Mock face-match: in a real system this would call a vision model and
+ * compare embeddings. Here we simulate it by picking a random seeded
+ * patient with a photoUrl with weighted "confidence", purely for demo
+ * purposes â€” this is NOT a real biometric match.
+ */
+export const mockFaceMatch = query({
+  args: {},
+  handler: async (ctx) => {
+    const withPhotos = await ctx.db
+      .query("patients")
+      .filter((q) => q.neq(q.field("photoUrl"), undefined))
+      .collect();
+    if (withPhotos.length === 0) return null;
+    const pick = withPhotos[Math.floor(Math.random() * withPhotos.length)];
+    const confidence = 0.82 + Math.random() * 0.15; // 82-97%, looks realistic for demo
+    return { patient: pick, confidence: Number(confidence.toFixed(2)) };
+  },
+});
+
+export const getPatientHistory = query({
+  args: { patientId: v.id("patients") },
+  handler: async (ctx, args) => {
+    const records = await ctx.db
+      .query("medicalRecords")
+      .withIndex("by_patient", (q) => q.eq("patientId", args.patientId))
+      .order("desc")
+      .collect();
+    return records;
+  },
+});
+
+export const createPatient = mutation({
+  args: {
+    fullName: v.string(),
+    phone: v.optional(v.string()),
+    govtId: v.optional(v.string()),
+    vehicleNumber: v.optional(v.string()),
+    age: v.optional(v.number()),
+    bloodGroup: v.optional(v.string()),
+    knownAllergies: v.optional(v.array(v.string())),
+    chronicConditions: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db.insert("patients", { ...args, createdAt: Date.now() });
+  },
+});
+
+
+===== FILE: convex\README.md =====
+
+# Welcome to your Convex functions directory!
+
+Write your Convex functions here.
+See https://docs.convex.dev/functions for more.
+
+A query function that takes two arguments looks like:
+
+```ts
+// convex/myFunctions.ts
+import { query } from "./_generated/server";
+import { v } from "convex/values";
+
+export const myQueryFunction = query({
+  // Validators for arguments.
+  args: {
+    first: v.number(),
+    second: v.string(),
+  },
+
+  // Function implementation.
+  handler: async (ctx, args) => {
+    // Read the database as many times as you need here.
+    // See https://docs.convex.dev/database/reading-data.
+    const documents = await ctx.db.query("tablename").collect();
+
+    // Arguments passed from the client are properties of the args object.
+    console.log(args.first, args.second);
+
+    // Write arbitrary JavaScript here: filter, aggregate, build derived data,
+    // remove non-public properties, or create new objects.
+    return documents;
+  },
+});
+```
+
+Using this query function in a React component looks like:
+
+```ts
+const data = useQuery(api.myFunctions.myQueryFunction, {
+  first: 10,
+  second: "hello",
+});
+```
+
+A mutation function looks like:
+
+```ts
+// convex/myFunctions.ts
+import { mutation } from "./_generated/server";
+import { v } from "convex/values";
+
+export const myMutationFunction = mutation({
+  // Validators for arguments.
+  args: {
+    first: v.string(),
+    second: v.string(),
+  },
+
+  // Function implementation.
+  handler: async (ctx, args) => {
+    // Insert or modify documents in the database here.
+    // Mutations can also read from the database like queries.
+    // See https://docs.convex.dev/database/writing-data.
+    const message = { body: args.first, author: args.second };
+    const id = await ctx.db.insert("messages", message);
+
+    // Optionally, return a value from your mutation.
+    return await ctx.db.get("messages", id);
+  },
+});
+```
+
+Using this mutation function in a React component looks like:
+
+```ts
+const mutation = useMutation(api.myFunctions.myMutationFunction);
+function handleButtonPress() {
+  // fire and forget, the most common way to use mutations
+  mutation({ first: "Hello!", second: "me" });
+  // OR
+  // use the result once the mutation has completed
+  mutation({ first: "Hello!", second: "me" }).then((result) =>
+    console.log(result),
+  );
+}
+```
+
+Use the Convex CLI to push your functions to a deployment. See everything
+the Convex CLI can do by running `npx convex -h` in your project root
+directory. To learn more, launch the docs with `npx convex docs`.
+
+
+===== FILE: convex\schema.ts =====
+
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
+
+export default defineSchema({
+  // ---------------------------------------------------------------------
+  // PATIENTS â€” persistent identity + medical history, independent of any
+  // single emergency. Looked up by phone / govt ID / vehicle number / face.
+  // ---------------------------------------------------------------------
+  patients: defineTable({
+    fullName: v.string(),
+    phone: v.optional(v.string()),
+    govtId: v.optional(v.string()), // Aadhaar-like ID, mocked
+    vehicleNumber: v.optional(v.string()),
+    age: v.optional(v.number()),
+    bloodGroup: v.optional(v.string()),
+    knownAllergies: v.optional(v.array(v.string())),
+    chronicConditions: v.optional(v.array(v.string())),
+    photoUrl: v.optional(v.string()), // for mock face-match
+    createdAt: v.number(),
+  })
+    .index("by_phone", ["phone"])
+    .index("by_govtId", ["govtId"])
+    .index("by_vehicleNumber", ["vehicleNumber"]),
+
+  // Past hospital visits / records tied to a patient (the "normal app that
+  // stores patient records" you described).
+  medicalRecords: defineTable({
+    patientId: v.id("patients"),
+    visitDate: v.number(),
+    hospitalId: v.optional(v.id("hospitals")),
+    diagnosis: v.string(),
+    notes: v.optional(v.string()),
+  }).index("by_patient", ["patientId"]),
+
+  // ---------------------------------------------------------------------
+  // AMBULANCES â€” static seeded fleet, lat/lng updated on a tick to fake
+  // live GPS movement.
+  // ---------------------------------------------------------------------
+  ambulances: defineTable({
+    vehicleNumber: v.string(),
+    driverName: v.string(),
+    helperName: v.string(),
+    lat: v.number(),
+    lng: v.number(),
+    status: v.union(
+      v.literal("idle"),
+      v.literal("dispatched"),
+      v.literal("en_route_to_patient"),
+      v.literal("with_patient"),
+      v.literal("en_route_to_hospital"),
+      v.literal("at_hospital"),
+    ),
+    currentSessionId: v.optional(v.id("sessions")),
+    equipmentLevel: v.union(
+      v.literal("basic"),
+      v.literal("advanced"), // ALS - advanced life support
+    ),
+  }).index("by_status", ["status"]),
+
+  // ---------------------------------------------------------------------
+  // HOSPITALS â€” static seeded list with capability flags + live bed/doctor
+  // counts so dispatch can pick the *nearest capable* hospital, not just
+  // nearest.
+  // ---------------------------------------------------------------------
+  hospitals: defineTable({
+    name: v.string(),
+    lat: v.number(),
+    lng: v.number(),
+    facilities: v.array(v.string()), // e.g. ["trauma", "neuro", "burns", "cardiac"]
+    totalBeds: v.number(),
+    availableBeds: v.number(),
+    erHeadName: v.string(),
+  }),
+
+  doctors: defineTable({
+    hospitalId: v.id("hospitals"),
+    name: v.string(),
+    specialty: v.string(),
+    available: v.boolean(),
+  }).index("by_hospital", ["hospitalId"]),
+
+  // ---------------------------------------------------------------------
+  // TRAFFIC SIGNALS â€” seeded points along routes; mock "outpost" that gets
+  // notified + flipped green as ambulance approaches.
+  // ---------------------------------------------------------------------
+  signals: defineTable({
+    name: v.string(),
+    lat: v.number(),
+    lng: v.number(),
+    state: v.union(v.literal("red"), v.literal("yellow"), v.literal("green")),
+    policeNotified: v.boolean(),
+    activeSessionId: v.optional(v.id("sessions")),
+  }),
+
+  // ---------------------------------------------------------------------
+  // SESSIONS â€” the central entity. Created by call OR app trigger, and
+  // every module (dispatch, triage, traffic, ER) reads/writes against it.
+  // ---------------------------------------------------------------------
+  sessions: defineTable({
+    // how it started
+    source: v.union(v.literal("call"), v.literal("app")),
+    callerPhone: v.optional(v.string()),
+
+    // location of the incident
+    incidentLat: v.number(),
+    incidentLng: v.number(),
+    incidentAddressGuess: v.optional(v.string()),
+
+    // linked patient (may be unknown at first, resolved later by ID/face)
+    patientId: v.optional(v.id("patients")),
+    patientNameUnconfirmed: v.optional(v.string()),
+
+    // raw + derived intake data
+    transcript: v.optional(v.string()),
+    extractedSymptoms: v.optional(v.array(v.string())), // e.g. ["bleeding","unconscious"]
+    firstAidGiven: v.optional(v.array(v.string())), // steps shown to bystander
+
+    // dispatch
+    assignedAmbulanceId: v.optional(v.id("ambulances")),
+    assignedHospitalId: v.optional(v.id("hospitals")),
+    etaSeconds: v.optional(v.number()),
+
+    // triage â€” AI proposed, ER-head can override
+    aiTriageColor: v.optional(
+      v.union(v.literal("red"), v.literal("yellow"), v.literal("green")),
+    ),
+    aiTriageReasoning: v.optional(v.string()),
+    finalTriageColor: v.optional(
+      v.union(v.literal("red"), v.literal("yellow"), v.literal("green")),
+    ),
+    triageOverriddenByErHead: v.optional(v.boolean()),
+
+    assignedDoctorId: v.optional(v.id("doctors")),
+    assignedBedConfirmed: v.optional(v.boolean()),
+
+    // overall lifecycle
+    status: v.union(
+      v.literal("created"), // call/app just triggered it
+      v.literal("first_aid_in_progress"),
+      v.literal("ambulance_dispatched"),
+      v.literal("ambulance_en_route_to_patient"),
+      v.literal("patient_picked_up"),
+      v.literal("en_route_to_hospital"),
+      v.literal("arrived_at_hospital"),
+      v.literal("closed"),
+    ),
+
+    createdAt: v.number(),
+  })
+    .index("by_status", ["status"])
+    .index("by_patient", ["patientId"]),
+
+  // Live vitals feed for a session â€” append-only log, latest = current.
+  vitalsLog: defineTable({
+    sessionId: v.id("sessions"),
+    heartRate: v.optional(v.number()),
+    bloodPressureSystolic: v.optional(v.number()),
+    bloodPressureDiastolic: v.optional(v.number()),
+    spo2: v.optional(v.number()),
+    consciousness: v.optional(
+      v.union(v.literal("alert"), v.literal("responsive"), v.literal("unresponsive")),
+    ),
+    recordedAt: v.number(),
+    recordedBy: v.string(), // helper name
+  }).index("by_session", ["sessionId"]),
+
+  // Simple event/audit trail for the session â€” powers a live activity feed
+  // on the dashboard so every module's actions are visible in one place.
+  sessionEvents: defineTable({
+    sessionId: v.id("sessions"),
+    actor: v.string(), // "AI Agent" | "Ambulance Helper" | "ER Head" | "Dispatcher"
+    message: v.string(),
+    createdAt: v.number(),
+  }).index("by_session", ["sessionId"]),
+});
+
+
+===== FILE: convex\seed.ts =====
+
+import { mutation } from "./_generated/server";
+
+const DEMO_PATIENTS = [
+  {
+    fullName: "Ravi Shankar",
+    phone: "9845011223",
+    govtId: "GOVT-IN-7741-2290",
+    vehicleNumber: "KA-05-MN-4521",
+    age: 29,
+    bloodGroup: "O+",
+    knownAllergies: ["Penicillin"],
+    chronicConditions: [],
+    photoUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Ravi",
+  },
+  {
+    fullName: "Priya Menon",
+    phone: "9886123456",
+    govtId: "GOVT-IN-5512-8834",
+    vehicleNumber: "KA-03-XQ-9981",
+    age: 34,
+    bloodGroup: "A-",
+    knownAllergies: [],
+    chronicConditions: ["Asthma"],
+    photoUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Priya",
+  },
+  {
+    fullName: "Arjun Reddy",
+    phone: "9900112233",
+    govtId: "GOVT-IN-3321-7765",
+    vehicleNumber: "KA-09-PL-1102",
+    age: 41,
+    bloodGroup: "B+",
+    knownAllergies: ["Sulfa drugs"],
+    chronicConditions: ["Type 2 Diabetes", "Hypertension"],
+    photoUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Arjun",
+  },
+];
+
+export const seedPatients = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const existing = await ctx.db.query("patients").first();
+    if (existing) return { skipped: true };
+
+    const ids = [];
+    for (const p of DEMO_PATIENTS) {
+      const id = await ctx.db.insert("patients", { ...p, createdAt: Date.now() });
+      ids.push(id);
+    }
+
+    // Give Ravi a past medical record so "past records maintained by
+    // hospital" has something real to show in the demo.
+    await ctx.db.insert("medicalRecords", {
+      patientId: ids[0],
+      visitDate: Date.now() - 1000 * 60 * 60 * 24 * 200,
+      diagnosis: "Fractured left wrist (two-wheeler fall)",
+      notes: "Treated with cast, fully healed. No complications.",
+    });
+
+    return { skipped: false, count: ids.length };
+  },
+});
+
+
+// Bengaluru-centered mock coordinates so the map looks coherent for a demo.
+const HOSPITALS = [
+  {
+    name: "Manipal Hospital, Old Airport Rd",
+    lat: 12.9581,
+    lng: 77.6484,
+    facilities: ["trauma", "neuro", "icu", "ventilator", "cardiac", "orthopedic"],
+    totalBeds: 40,
+    availableBeds: 6,
+    erHeadName: "Dr. Anita Rao",
+  },
+  {
+    name: "Fortis Hospital, Bannerghatta Rd",
+    lat: 12.8893,
+    lng: 77.5972,
+    facilities: ["trauma", "cardiac", "icu", "ventilator", "burns_unit"],
+    totalBeds: 35,
+    availableBeds: 3,
+    erHeadName: "Dr. Suresh Iyer",
+  },
+  {
+    name: "St. John's Medical College Hospital",
+    lat: 12.9279,
+    lng: 77.6271,
+    facilities: ["trauma", "orthopedic", "maternity", "blood_bank"],
+    totalBeds: 50,
+    availableBeds: 10,
+    erHeadName: "Dr. Meera Joseph",
+  },
+  {
+    name: "Victoria Hospital (Govt.)",
+    lat: 12.9634,
+    lng: 77.5733,
+    facilities: ["trauma", "icu", "ventilator", "antivenom", "blood_bank"],
+    totalBeds: 60,
+    availableBeds: 14,
+    erHeadName: "Dr. Ramesh Gowda",
+  },
+  {
+    name: "Sakra World Hospital",
+    lat: 12.9279,
+    lng: 77.6837,
+    facilities: ["neuro", "cardiac", "icu", "ventilator", "orthopedic"],
+    totalBeds: 30,
+    availableBeds: 2,
+    erHeadName: "Dr. Kavya Nair",
+  },
+];
+
+const AMBULANCES = [
+  { vehicleNumber: "KA-01-AB-1234", driverName: "Manjunath K", helperName: "Ravi Kumar", lat: 12.9716, lng: 77.5946, equipmentLevel: "advanced" as const },
+  { vehicleNumber: "KA-01-AB-5678", driverName: "Suresh P", helperName: "Anil D", lat: 12.9352, lng: 77.6245, equipmentLevel: "basic" as const },
+  { vehicleNumber: "KA-01-AB-9012", driverName: "Lokesh R", helperName: "Farhan A", lat: 12.9098, lng: 77.6412, equipmentLevel: "advanced" as const },
+  { vehicleNumber: "KA-01-AB-3456", driverName: "Naveen S", helperName: "Vinay M", lat: 12.9784, lng: 77.6408, equipmentLevel: "basic" as const },
+  { vehicleNumber: "KA-01-AB-7890", driverName: "Prakash T", helperName: "Joseph K", lat: 12.9141, lng: 77.5811, equipmentLevel: "advanced" as const },
+  { vehicleNumber: "KA-01-AB-2468", driverName: "Imran H", helperName: "Deepak N", lat: 12.9611, lng: 77.6042, equipmentLevel: "basic" as const },
+  { vehicleNumber: "KA-01-AB-1357", driverName: "Mahesh B", helperName: "Sandeep R", lat: 12.9483, lng: 77.6700, equipmentLevel: "advanced" as const },
+  { vehicleNumber: "KA-01-AB-8642", driverName: "Ganesh V", helperName: "Kiran S", lat: 12.8997, lng: 77.6098, equipmentLevel: "basic" as const },
+  { vehicleNumber: "KA-01-AB-9753", driverName: "Ravindra P", helperName: "Yusuf M", lat: 12.9856, lng: 77.5602, equipmentLevel: "advanced" as const },
+  { vehicleNumber: "KA-01-AB-1597", driverName: "Chetan K", helperName: "Arjun L", lat: 12.9203, lng: 77.6529, equipmentLevel: "basic" as const },
+];
+
+const DOCTORS_BY_HOSPITAL_INDEX: Record<number, { name: string; specialty: string }[]> = {
+  0: [
+    { name: "Dr. Anita Rao", specialty: "Trauma Surgery" },
+    { name: "Dr. Rakesh Sinha", specialty: "Neurosurgery" },
+    { name: "Dr. Pooja Shetty", specialty: "Cardiology" },
+  ],
+  1: [
+    { name: "Dr. Suresh Iyer", specialty: "Cardiology" },
+    { name: "Dr. Nandini K", specialty: "Burns & Plastic Surgery" },
+  ],
+  2: [
+    { name: "Dr. Meera Joseph", specialty: "Orthopedics" },
+    { name: "Dr. Thomas Abraham", specialty: "General Surgery" },
+  ],
+  3: [
+    { name: "Dr. Ramesh Gowda", specialty: "Emergency Medicine" },
+    { name: "Dr. Lakshmi Devi", specialty: "Toxicology" },
+  ],
+  4: [
+    { name: "Dr. Kavya Nair", specialty: "Neurology" },
+    { name: "Dr. Arvind Menon", specialty: "Cardiology" },
+  ],
+};
+
+const SIGNALS = [
+  { name: "Hosur Rd x Bannerghatta Rd", lat: 12.9279, lng: 77.6105 },
+  { name: "Silk Board Junction", lat: 12.9176, lng: 77.6233 },
+  { name: "Koramangala 80ft Rd x Sarjapur Rd", lat: 12.9352, lng: 77.6146 },
+  { name: "Trinity Circle, MG Road", lat: 12.9719, lng: 77.6196 },
+  { name: "Old Airport Rd x Domlur", lat: 12.9609, lng: 77.6387 },
+  { name: "Richmond Circle", lat: 12.9656, lng: 77.5996 },
+  { name: "Lalbagh West Gate", lat: 12.9486, lng: 77.5847 },
+];
+
+export const seedAll = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const existing = await ctx.db.query("hospitals").first();
+    if (existing) {
+      return { skipped: true, reason: "Data already seeded." };
+    }
+
+    const hospitalIds = [];
+    for (const h of HOSPITALS) {
+      const id = await ctx.db.insert("hospitals", h);
+      hospitalIds.push(id);
+    }
+
+    for (let i = 0; i < hospitalIds.length; i++) {
+      const docs = DOCTORS_BY_HOSPITAL_INDEX[i] ?? [];
+      for (const d of docs) {
+        await ctx.db.insert("doctors", {
+          hospitalId: hospitalIds[i],
+          name: d.name,
+          specialty: d.specialty,
+          available: true,
+        });
+      }
+    }
+
+    for (const a of AMBULANCES) {
+      await ctx.db.insert("ambulances", { ...a, status: "idle" });
+    }
+
+    for (const s of SIGNALS) {
+      await ctx.db.insert("signals", {
+        ...s,
+        state: "red",
+        policeNotified: false,
+      });
+    }
+
+    return {
+      skipped: false,
+      hospitals: hospitalIds.length,
+      ambulances: AMBULANCES.length,
+      signals: SIGNALS.length,
+    };
+  },
+});
+
+
+===== FILE: convex\sessions.ts =====
+
+import { mutation, query, internalMutation } from "./_generated/server";
+import { v } from "convex/values";
+import { internal } from "./_generated/api";
+
+// ---------------------------------------------------------------------
+// Create a new session â€” entry point for BOTH call and app triggers.
+// ---------------------------------------------------------------------
+export const createSession = mutation({
+  args: {
+    source: v.union(v.literal("call"), v.literal("app")),
+    callerPhone: v.optional(v.string()),
+    incidentLat: v.number(),
+    incidentLng: v.number(),
+    incidentAddressGuess: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const sessionId = await ctx.db.insert("sessions", {
+      source: args.source,
+      callerPhone: args.callerPhone,
+      incidentLat: args.incidentLat,
+      incidentLng: args.incidentLng,
+      incidentAddressGuess: args.incidentAddressGuess,
+      status: "created",
+      createdAt: Date.now(),
+    });
+
+    await ctx.db.insert("sessionEvents", {
+      sessionId,
+      actor: args.source === "call" ? "Caller" : "App User",
+      message:
+        args.source === "call"
+          ? "Emergency call received. Session created."
+          : "Emergency reported via app. Session created.",
+      createdAt: Date.now(),
+    });
+
+    return sessionId;
+  },
+});
+
+export const logEvent = mutation({
+  args: {
+    sessionId: v.id("sessions"),
+    actor: v.string(),
+    message: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.insert("sessionEvents", {
+      sessionId: args.sessionId,
+      actor: args.actor,
+      message: args.message,
+      createdAt: Date.now(),
+    });
+  },
+});
+
+export const internalLogEvent = internalMutation({
+  args: {
+    sessionId: v.id("sessions"),
+    actor: v.string(),
+    message: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.insert("sessionEvents", {
+      sessionId: args.sessionId,
+      actor: args.actor,
+      message: args.message,
+      createdAt: Date.now(),
+    });
+  },
+});
+
+export const setStatus = mutation({
+  args: {
+    sessionId: v.id("sessions"),
+    status: v.union(
+      v.literal("created"),
+      v.literal("first_aid_in_progress"),
+      v.literal("ambulance_dispatched"),
+      v.literal("ambulance_en_route_to_patient"),
+      v.literal("patient_picked_up"),
+      v.literal("en_route_to_hospital"),
+      v.literal("arrived_at_hospital"),
+      v.literal("closed"),
+    ),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.sessionId, { status: args.status });
+  },
+});
+
+// ---------------------------------------------------------------------
+// Queries
+// ---------------------------------------------------------------------
+export const getSession = query({
+  args: { sessionId: v.id("sessions") },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.sessionId);
+  },
+});
+
+export const listActiveSessions = query({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("sessions").order("desc").collect();
+    return all.filter((s) => s.status !== "closed");
+  },
+});
+
+export const getSessionEvents = query({
+  args: { sessionId: v.id("sessions") },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("sessionEvents")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .order("asc")
+      .collect();
+  },
+});
+
+export const getVitalsForSession = query({
+  args: { sessionId: v.id("sessions") },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("vitalsLog")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .order("desc")
+      .collect();
+  },
+});
+
+// ---------------------------------------------------------------------
+// Patch arbitrary session fields produced by the intake/triage agents.
+// Kept generic + internal so server-side actions (Gemini calls) can write
+// results back without exposing a giant public mutation surface.
+// ---------------------------------------------------------------------
+export const applyIntakeResult = internalMutation({
+  args: {
+    sessionId: v.id("sessions"),
+    transcript: v.string(),
+    extractedSymptoms: v.array(v.string()),
+    firstAidGiven: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.sessionId, {
+      transcript: args.transcript,
+      extractedSymptoms: args.extractedSymptoms,
+      firstAidGiven: args.firstAidGiven,
+      status: "first_aid_in_progress",
+    });
+    await ctx.runMutation(internal.sessions.internalLogEvent, {
+      sessionId: args.sessionId,
+      actor: "AI Agent",
+      message: `Detected: ${args.extractedSymptoms.join(", ") || "no clear symptoms yet"}. First-aid guidance sent.`,
+    });
+  },
+});
+
+export const applyTriageResult = internalMutation({
+  args: {
+    sessionId: v.id("sessions"),
+    aiTriageColor: v.union(v.literal("red"), v.literal("yellow"), v.literal("green")),
+    aiTriageReasoning: v.string(),
+    assignedDoctorId: v.optional(v.id("doctors")),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.sessionId, {
+      aiTriageColor: args.aiTriageColor,
+      aiTriageReasoning: args.aiTriageReasoning,
+      finalTriageColor: args.aiTriageColor,
+      triageOverriddenByErHead: false,
+      assignedDoctorId: args.assignedDoctorId,
+      assignedBedConfirmed: true,
+    });
+    await ctx.runMutation(internal.sessions.internalLogEvent, {
+      sessionId: args.sessionId,
+      actor: "AI Agent",
+      message: `Triage proposed: ${args.aiTriageColor.toUpperCase()}. ${args.aiTriageReasoning}`,
+    });
+  },
+});
+
+export const overrideTriage = mutation({
+  args: {
+    sessionId: v.id("sessions"),
+    color: v.union(v.literal("red"), v.literal("yellow"), v.literal("green")),
+    erHeadName: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.sessionId, {
+      finalTriageColor: args.color,
+      triageOverriddenByErHead: true,
+    });
+    await ctx.db.insert("sessionEvents", {
+      sessionId: args.sessionId,
+      actor: args.erHeadName,
+      message: `ER Head overrode triage to ${args.color.toUpperCase()}.`,
+      createdAt: Date.now(),
+    });
+  },
+});
+
+export const linkPatient = mutation({
+  args: {
+    sessionId: v.id("sessions"),
+    patientId: v.optional(v.id("patients")),
+    patientNameUnconfirmed: v.optional(v.string()),
+    actor: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.sessionId, {
+      patientId: args.patientId,
+      patientNameUnconfirmed: args.patientNameUnconfirmed,
+    });
+    await ctx.db.insert("sessionEvents", {
+      sessionId: args.sessionId,
+      actor: args.actor,
+      message: args.patientId
+        ? "Patient identified and linked to existing record."
+        : `Patient not found in records â€” proceeding as "${args.patientNameUnconfirmed ?? "Unknown"}".`,
+      createdAt: Date.now(),
+    });
+  },
+});
+
+export const recordVitals = mutation({
+  args: {
+    sessionId: v.id("sessions"),
+    heartRate: v.optional(v.number()),
+    bloodPressureSystolic: v.optional(v.number()),
+    bloodPressureDiastolic: v.optional(v.number()),
+    spo2: v.optional(v.number()),
+    consciousness: v.optional(
+      v.union(v.literal("alert"), v.literal("responsive"), v.literal("unresponsive")),
+    ),
+    recordedBy: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.insert("vitalsLog", {
+      sessionId: args.sessionId,
+      heartRate: args.heartRate,
+      bloodPressureSystolic: args.bloodPressureSystolic,
+      bloodPressureDiastolic: args.bloodPressureDiastolic,
+      spo2: args.spo2,
+      consciousness: args.consciousness,
+      recordedAt: Date.now(),
+      recordedBy: args.recordedBy,
+    });
+    await ctx.db.insert("sessionEvents", {
+      sessionId: args.sessionId,
+      actor: args.recordedBy,
+      message: "Vitals recorded and synced to ER dashboard.",
+      createdAt: Date.now(),
+    });
+  },
+});
+
+
+===== FILE: convex\traffic.ts =====
+
+import { mutation, query } from "./_generated/server";
+import { v } from "convex/values";
+import { distanceKm } from "./lib";
+
+export const listSignals = query({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.db.query("signals").collect();
+  },
+});
+
+/**
+ * Called on each ambulance movement tick. Any signal within `triggerRadiusKm`
+ * of the ambulance's current position gets flipped green + police-notified
+ * for this session; signals the ambulance has moved away from revert to red.
+ */
+export const updateSignalsForAmbulancePosition = mutation({
+  args: {
+    sessionId: v.id("sessions"),
+    ambulanceLat: v.number(),
+    ambulanceLng: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const triggerRadiusKm = 1.2;
+    const allSignals = await ctx.db.query("signals").collect();
+
+    for (const signal of allSignals) {
+      const dist = distanceKm(args.ambulanceLat, args.ambulanceLng, signal.lat, signal.lng);
+      const shouldBeGreen = dist <= triggerRadiusKm;
+
+      if (shouldBeGreen && signal.activeSessionId !== args.sessionId) {
+        await ctx.db.patch(signal._id, {
+          state: "green",
+          policeNotified: true,
+          activeSessionId: args.sessionId,
+        });
+        await ctx.db.insert("sessionEvents", {
+          sessionId: args.sessionId,
+          actor: "Traffic Control Agent",
+          message: `Signal "${signal.name}" switched to GREEN, local police outpost notified.`,
+          createdAt: Date.now(),
+        });
+      } else if (!shouldBeGreen && signal.activeSessionId === args.sessionId) {
+        await ctx.db.patch(signal._id, {
+          state: "red",
+          policeNotified: false,
+          activeSessionId: undefined,
+        });
+      }
+    }
+  },
+});
+
+export const resetAllSignals = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const allSignals = await ctx.db.query("signals").collect();
+    for (const s of allSignals) {
+      await ctx.db.patch(s._id, { state: "red", policeNotified: false, activeSessionId: undefined });
+    }
+  },
+});
+
+
+===== FILE: convex\triageAgent.ts =====
+
+/// <reference types="node" />
+"use node";
+
+import { action } from "./_generated/server";
+import { v } from "convex/values";
+import { internal } from "./_generated/api";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+
+// NOTE: the internal queries this action depends on (getSessionForTriage,
+// getLatestVitals, getDoctorsForHospital) live in triageAgentQueries.ts â€”
+// "use node" files cannot also export ctx.db-using queries, so they're
+// split into a separate non-node file.
+
+function getClient() {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "GEMINI_API_KEY is not set. Run `npx convex env set GEMINI_API_KEY <your-key>`.",
+    );
+  }
+  return new GoogleGenerativeAI(apiKey);
+}
+
+export const runTriageAgent = action({
+  args: { sessionId: v.id("sessions") },
+  handler: async (ctx, args): Promise<{ color: string; reasoning: string }> => {
+    const session: any = await ctx.runQuery(
+      internal.triageAgentQueries.getSessionForTriage,
+      { sessionId: args.sessionId },
+    );
+    if (!session) throw new Error("Session not found");
+
+    const vitalsList: any[] = await ctx.runQuery(
+      internal.triageAgentQueries.getLatestVitals,
+      { sessionId: args.sessionId },
+    );
+    const latestVitals = vitalsList[0] ?? null;
+
+    const doctors: any[] = session.assignedHospitalId
+      ? await ctx.runQuery(internal.triageAgentQueries.getDoctorsForHospital, {
+          hospitalId: session.assignedHospitalId,
+        })
+      : [];
+
+    const genAI = getClient();
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
+
+    const prompt = `You are an emergency room triage assistant. Based on the data below, propose a triage color and explain your reasoning in 1-2 short sentences a doctor can quickly sanity-check.
+
+Triage colors:
+- red = immediate life threat, needs care within minutes
+- yellow = urgent, needs care soon but stable enough to wait briefly
+- green = non-critical, can wait
+
+Incident transcript: "${session.transcript ?? "Not available"}"
+Detected symptoms: ${(session.extractedSymptoms ?? []).join(", ") || "none recorded"}
+Latest vitals: ${
+      latestVitals
+        ? `Heart rate: ${latestVitals.heartRate ?? "unknown"} bpm, BP: ${latestVitals.bloodPressureSystolic ?? "?"}/${latestVitals.bloodPressureDiastolic ?? "?"}, SpO2: ${latestVitals.spo2 ?? "unknown"}%, Consciousness: ${latestVitals.consciousness ?? "unknown"}`
+        : "Not yet recorded"
+    }
+
+Available doctor specialties at the receiving hospital: ${doctors.map((d: any) => d.specialty).join(", ") || "none listed"}
+
+Return ONLY valid JSON in this exact shape, nothing else:
+{"color": "red" | "yellow" | "green", "reasoning": "short explanation", "preferredSpecialty": "specialty string or null"}`;
+
+    let color: "red" | "yellow" | "green" = "yellow";
+    let reasoning = "Defaulted to yellow â€” AI response could not be parsed, please assess manually.";
+    let preferredSpecialty: string | null = null;
+
+    try {
+      const result = await model.generateContent(prompt);
+      const text = result.response.text().trim();
+      const cleaned = text.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(cleaned);
+      if (["red", "yellow", "green"].includes(parsed.color)) {
+        color = parsed.color;
+      }
+      if (typeof parsed.reasoning === "string") {
+        reasoning = parsed.reasoning;
+      }
+      if (typeof parsed.preferredSpecialty === "string") {
+        preferredSpecialty = parsed.preferredSpecialty;
+      }
+    } catch (err) {
+      console.error("Gemini triage failed, using safe default (yellow):", err);
+    }
+
+    const matchedDoctor =
+      doctors.find(
+        (d: any) =>
+          preferredSpecialty &&
+          d.specialty.toLowerCase().includes(preferredSpecialty.toLowerCase()) &&
+          d.available,
+      ) ?? doctors.find((d: any) => d.available);
+
+    await ctx.runMutation(internal.sessions.applyTriageResult, {
+      sessionId: args.sessionId,
+      aiTriageColor: color,
+      aiTriageReasoning: reasoning,
+      assignedDoctorId: matchedDoctor?._id,
+    });
+
+    return { color, reasoning };
+  },
+});
+
+
+===== FILE: convex\triageAgentQueries.ts =====
+
+import { internalQuery } from "./_generated/server";
+import { v } from "convex/values";
+
+export const getSessionForTriage = internalQuery({
+  args: { sessionId: v.id("sessions") },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.sessionId);
+  },
+});
+
+export const getLatestVitals = internalQuery({
+  args: { sessionId: v.id("sessions") },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("vitalsLog")
+      .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
+      .order("desc")
+      .collect();
+  },
+});
+
+export const getDoctorsForHospital = internalQuery({
+  args: { hospitalId: v.id("hospitals") },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("doctors")
+      .withIndex("by_hospital", (q) => q.eq("hospitalId", args.hospitalId))
+      .collect();
+  },
+});
+
+
+===== FILE: convex\tsconfig.json =====
+
+{
+  /* This TypeScript project config describes the environment that
+   * Convex functions run in and is used to typecheck them.
+   * You can modify it, but some settings are required to use Convex.
+   */
+  "compilerOptions": {
+    /* These settings are not required by Convex and can be modified. */
+    "allowJs": true,
+    "strict": true,
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "skipLibCheck": true,
+    "allowSyntheticDefaultImports": true,
+
+    /* These compiler options are required by Convex */
+    "target": "ESNext",
+    "lib": ["ES2023", "dom"],
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "isolatedModules": true,
+    "noEmit": true
+  },
+  "include": ["./**/*"],
+  "exclude": ["./_generated"]
+}
+
+
+===== FILE: package.json =====
+
+{
+  "name": "raksha",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "next build",
+    "check": "biome check .",
+    "check:unsafe": "biome check --write --unsafe .",
+    "check:write": "biome check --write .",
+    "dev": "next dev --turbo",
+    "preview": "next build && next start",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@radix-ui/react-dialog": "^1.1.19",
+    "@radix-ui/react-label": "^2.1.11",
+    "@radix-ui/react-scroll-area": "^1.2.14",
+    "@radix-ui/react-select": "^2.3.3",
+    "@radix-ui/react-separator": "^1.1.11",
+    "@radix-ui/react-slot": "^1.3.0",
+    "@radix-ui/react-tabs": "^1.1.17",
+    "@t3-oss/env-nextjs": "^0.12.0",
+    "better-auth": "^1.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "convex": "^1.42.1",
+    "date-fns": "^4.4.0",
+    "framer-motion": "^12.42.2",
+    "lucide-react": "^1.24.0",
+    "maplibre-gl": "^5.24.0",
+    "next": "^15.2.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "sonner": "^2.0.7",
+    "tailwind-merge": "^3.6.0",
+    "tailwindcss-animate": "^1.0.7",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.2.5",
+    "@tailwindcss/postcss": "^4.0.15",
+    "@types/node": "^20.14.10",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^4.0.15",
+    "typescript": "^5.8.2"
+  },
+  "ct3aMetadata": {
+    "initVersion": "7.40.0"
+  }
+}
+
+
+===== FILE: src\app\api\auth\[...all]\route.ts =====
+
+
+===== FILE: src\env.js =====
+
+import { createEnv } from "@t3-oss/env-nextjs";
+import { z } from "zod";
+
+export const env = createEnv({
+  /**
+   * Specify your server-side environment variables schema here. This way you can ensure the app
+   * isn't built with invalid env vars.
+   */
+  server: {
+    BETTER_AUTH_SECRET:
+      process.env.NODE_ENV === "production" ? z.string() : z.string().optional(),
+    BETTER_AUTH_GITHUB_CLIENT_ID: z.string(),
+    BETTER_AUTH_GITHUB_CLIENT_SECRET: z.string(),
+    NODE_ENV: z
+      .enum(["development", "test", "production"]) 
+      .default("development"),
+  },
+
+  /**
+   * Specify your client-side environment variables schema here. This way you can ensure the app
+   * isn't built with invalid env vars. To expose them to the client, prefix them with
+   * `NEXT_PUBLIC_`.
+   */
+  client: {
+    // NEXT_PUBLIC_CLIENTVAR: z.string(),
+  },
+
+  /**
+   * You can't destruct `process.env` as a regular object in the Next.js edge runtimes (e.g.
+   * middlewares) or client-side so we need to destruct manually.
+   */
+  runtimeEnv: {
+    BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
+    BETTER_AUTH_GITHUB_CLIENT_ID: process.env.BETTER_AUTH_GITHUB_CLIENT_ID,
+    BETTER_AUTH_GITHUB_CLIENT_SECRET: process.env.BETTER_AUTH_GITHUB_CLIENT_SECRET,
+    NODE_ENV: process.env.NODE_ENV,
+    // NEXT_PUBLIC_CLIENTVAR: process.env.NEXT_PUBLIC_CLIENTVAR,
+  },
+  /**
+   * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially
+   * useful for Docker builds.
+   */
+  skipValidation: !!process.env.SKIP_ENV_VALIDATION,
+  /**
+   * Makes it so that empty strings are treated as undefined. `SOME_VAR: z.string()` and
+   * `SOME_VAR=''` will throw an error.
+   */
+  emptyStringAsUndefined: true,
+});
+
+
+===== FILE: src\server\better-auth\client.ts =====
+
+import { createAuthClient } from "better-auth/react";
+
+export const authClient = createAuthClient();
+
+export type Session = typeof authClient.$Infer.Session;
+
+
+===== FILE: src\server\better-auth\config.ts =====
+
+import { betterAuth } from "better-auth";
+
+export const auth = betterAuth({
+  emailAndPassword: {
+    enabled: true,
+  },
+});
+
+export type Session = typeof auth.$Infer.Session;
+
+
+===== FILE: src\server\better-auth\index.ts =====
+
+export { auth } from "./config";
+
+
+===== FILE: src\server\better-auth\server.ts =====
+
+import { auth } from ".";
+import { headers } from "next/headers";
+import { cache } from "react";
+
+export const getSession = cache(async () =>
+  auth.api.getSession({ headers: await headers() })
+);
+

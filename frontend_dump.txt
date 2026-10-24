@@ -1,0 +1,698 @@
+===== FILE: src\app\layout.tsx ===== 
+import type { Metadata } from "next";
+import "./globals.css";
+import { ConvexClientProvider } from "./ConvexClientProvider";
+import { Toaster } from "@/components/ui/sonner";
+import { Geist } from "next/font/google";
+import { cn } from "@/lib/utils";
+
+const geist = Geist({subsets:['latin'],variable:'--font-sans'});
+
+export const metadata: Metadata = {
+  title: "RAKSHA — Agentic Emergency Response",
+  description: "AI-coordinated ambulance dispatch, triage, and hospital readiness system.",
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html lang="en" className={cn("h-full antialiased", "font-sans", geist.variable)}>
+      <body className="min-h-full flex flex-col bg-neutral-950 text-neutral-100 font-sans">
+        <ConvexClientProvider>
+          {children}
+          <Toaster />
+        </ConvexClientProvider>
+      </body>
+    </html>
+  );
+}
+
+===== FILE: src\app\ConvexClientProvider.tsx ===== 
+"use client";
+
+import { ConvexProvider, ConvexReactClient } from "convex/react";
+import { ReactNode } from "react";
+
+const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL ?? "";
+
+const convex = new ConvexReactClient(convexUrl);
+
+export function ConvexClientProvider({ children }: { children: ReactNode }) {
+  return <ConvexProvider client={convex}>{children}</ConvexProvider>;
+}
+
+===== FILE: src\app\globals.css ===== 
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* Base surface */
+  --color-bg: #0b0e11;
+  --color-surface: #12161b;
+  --color-surface-raised: #181d24;
+  --color-border: #262d36;
+  --color-border-bright: #374151;
+
+  /* Text */
+  --color-text: #f2f1ed;
+  --color-text-dim: #9aa3ad;
+  --color-text-faint: #5f6b78;
+
+  /* Semantic — triage / system states. These ARE the brand. */
+  --color-red: #e5484d;
+  --color-red-dim: #4a1f21;
+  --color-amber: #f5a623;
+  --color-amber-dim: #4a3a16;
+  --color-green: #3dd68c;
+  --color-green-dim: #163e2e;
+  --color-cyan: #3b9fe0;
+  --color-cyan-dim: #163348;
+
+  --font-display: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  --font-body: ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+@theme inline {
+  --color-background: var(--color-bg);
+  --color-foreground: var(--color-text);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-display);
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  background-image:
+    radial-gradient(circle at 15% 10%, rgba(59, 159, 224, 0.06), transparent 40%),
+    radial-gradient(circle at 85% 90%, rgba(229, 72, 77, 0.04), transparent 45%);
+  background-attachment: fixed;
+}
+
+/* Subtle scanline texture for the "instrumentation" feel — very low opacity. */
+.raksha-grid-bg {
+  background-image: linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.85); }
+}
+.pulse-dot {
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+
+@keyframes heartbeat-sweep {
+  0% { stroke-dashoffset: 1000; }
+  100% { stroke-dashoffset: 0; }
+}
+.heartbeat-sweep {
+  animation: heartbeat-sweep 2.4s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-dot, .heartbeat-sweep {
+    animation: none;
+  }
+}
+
+@keyframes wave-drift-1 {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  50% { transform: translate(-30px, 20px) rotate(2deg); }
+}
+@keyframes wave-drift-2 {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  50% { transform: translate(20px, -25px) rotate(-1.5deg); }
+}
+@keyframes wave-drift-3 {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  50% { transform: translate(-15px, -15px) rotate(1deg); }
+}
+.wave-path-1 { animation: wave-drift-1 14s ease-in-out infinite; }
+.wave-path-2 { animation: wave-drift-2 18s ease-in-out infinite; }
+.wave-path-3 { animation: wave-drift-3 22s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .wave-path-1, .wave-path-2, .wave-path-3 {
+    animation: none;
+  }
+}
+
+::selection {
+  background: var(--color-cyan-dim);
+  color: var(--color-text);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+===== FILE: src\components\effects\GlowCard.tsx ===== 
+"use client";
+
+import * as React from "react";
+import { motion, useMotionValue, useMotionTemplate } from "framer-motion";
+import { cn } from "@/lib/utils";
+
+interface GlowCardProps extends React.HTMLAttributes<HTMLDivElement> {
+  glowColor?: string; // CSS color for the shine, defaults to cyan
+  children: React.ReactNode;
+}
+
+/**
+ * Wraps content in a card whose border glows along a soft radial gradient
+ * that follows the mouse cursor — the signature interaction borrowed from
+ * the Mya reference. Falls back gracefully (static border) with no JS / on
+ * touch devices since mousemove never fires there.
+ */
+export function GlowCard({ glowColor = "59, 159, 224", className, children, ...props }: GlowCardProps) {
+  const mouseX = useMotionValue(0);
+  const mouseY = useMotionValue(0);
+  const opacity = useMotionValue(0);
+
+  function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    mouseX.set(e.clientX - rect.left);
+    mouseY.set(e.clientY - rect.top);
+  }
+
+  const background = useMotionTemplate`radial-gradient(280px circle at ${mouseX}px ${mouseY}px, rgba(${glowColor}, 0.18), transparent 70%)`;
+
+  return (
+    <div
+      onMouseMove={handleMouseMove}
+      onMouseEnter={() => opacity.set(1)}
+      onMouseLeave={() => opacity.set(0)}
+      className={cn(
+        "group relative rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden",
+        "transition-colors duration-300 hover:border-[var(--color-border-bright)]",
+        className,
+      )}
+      {...props}
+    >
+      <motion.div
+        className="pointer-events-none absolute inset-0 z-0 transition-opacity duration-300"
+        style={{ background, opacity }}
+      />
+      <div className="relative z-10">{children}</div>
+    </div>
+  );
+}
+
+===== FILE: src\components\effects\WaveBackground.tsx ===== 
+"use client";
+
+/**
+ * Ambient animated wave background — borrows the flowing light-streak feel
+ * from the reference, rendered as layered blurred SVG strokes that drift
+ * slowly via CSS keyframes. Fixed + behind everything, pointer-events none.
+ */
+export function WaveBackground() {
+  return (
+    <div className="fixed inset-0 -z-10 overflow-hidden" aria-hidden="true">
+      <svg
+        className="absolute -top-1/4 -right-1/4 h-[140%] w-[140%] opacity-40"
+        viewBox="0 0 800 800"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <defs>
+          <linearGradient id="waveGradA" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#3b9fe0" stopOpacity="0" />
+            <stop offset="50%" stopColor="#3b9fe0" stopOpacity="0.6" />
+            <stop offset="100%" stopColor="#7c5cff" stopOpacity="0" />
+          </linearGradient>
+          <linearGradient id="waveGradB" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#e5484d" stopOpacity="0" />
+            <stop offset="50%" stopColor="#7c5cff" stopOpacity="0.35" />
+            <stop offset="100%" stopColor="#3b9fe0" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path
+          className="wave-path-1"
+          d="M -100 500 Q 200 300, 400 450 T 900 350"
+          stroke="url(#waveGradA)"
+          strokeWidth="2"
+        />
+        <path
+          className="wave-path-2"
+          d="M -100 600 Q 250 350, 450 550 T 950 400"
+          stroke="url(#waveGradB)"
+          strokeWidth="1.5"
+        />
+        <path
+          className="wave-path-3"
+          d="M -100 400 Q 180 250, 380 380 T 880 280"
+          stroke="url(#waveGradA)"
+          strokeWidth="1"
+        />
+      </svg>
+      <div className="absolute inset-0 raksha-grid-bg opacity-50" />
+    </div>
+  );
+}
+
+===== FILE: src\components\modules\dispatch\LiveMap.tsx ===== 
+"use client";
+
+import { useEffect, useRef } from "react";
+import maplibregl from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
+import { useQuery } from "convex/react";
+import { api } from "../../../../convex/_generated/api";
+import type { Id } from "../../../../convex/_generated/dataModel";
+
+// Free vector basemap — no API key required. Demo tile style; swap for a
+// keyed provider (MapTiler/Stadia) in production for higher rate limits.
+const MAP_STYLE = "https://demotiles.maplibre.org/style.json";
+
+export function LiveMap({ sessionId }: { sessionId: Id<"sessions"> }) {
+  const session = useQuery(api.sessions.getSession, { sessionId });
+  const ambulance = useQuery(
+    api.directory.getAmbulance,
+    session?.assignedAmbulanceId ? { ambulanceId: session.assignedAmbulanceId } : "skip",
+  );
+  const hospital = useQuery(
+    api.directory.getHospital,
+    session?.assignedHospitalId ? { hospitalId: session.assignedHospitalId } : "skip",
+  );
+  const signals = useQuery(api.traffic.listSignals, {});
+
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
+  const markersRef = useRef<Record<string, maplibregl.Marker>>({});
+
+  // Initialize map once.
+  useEffect(() => {
+    if (!mapContainerRef.current || mapRef.current || !session) return;
+
+    const map = new maplibregl.Map({
+      container: mapContainerRef.current,
+      style: MAP_STYLE,
+      center: [session.incidentLng, session.incidentLat],
+      zoom: 12,
+      attributionControl: false,
+    });
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+    mapRef.current = map;
+
+    return () => {
+      map.remove();
+      mapRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!session]);
+
+  function makeMarkerEl(color: string, label: string, pulse = false) {
+    const el = document.createElement("div");
+    el.style.width = "16px";
+    el.style.height = "16px";
+    el.style.borderRadius = "50%";
+    el.style.background = color;
+    el.style.border = "2px solid rgba(255,255,255,0.85)";
+    el.style.boxShadow = `0 0 12px 2px ${color}`;
+    if (pulse) el.classList.add("pulse-dot");
+    el.title = label;
+    return el;
+  }
+
+  // Incident + hospital + signal markers (static-ish, update on data change).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !session) return;
+
+    if (!markersRef.current.incident) {
+      markersRef.current.incident = new maplibregl.Marker({ element: makeMarkerEl("#e5484d", "Incident") })
+        .setLngLat([session.incidentLng, session.incidentLat])
+        .addTo(map);
+    }
+
+    if (hospital && !markersRef.current.hospital) {
+      markersRef.current.hospital = new maplibregl.Marker({ element: makeMarkerEl("#3b9fe0", hospital.name) })
+        .setLngLat([hospital.lng, hospital.lat])
+        .addTo(map);
+    }
+
+    signals?.forEach((signal) => {
+      const key = `signal-${signal._id}`;
+      const color = signal.state === "green" ? "#3dd68c" : "#5f6b78";
+      if (markersRef.current[key]) {
+        markersRef.current[key].remove();
+      }
+      const el = makeMarkerEl(color, signal.name, signal.state === "green");
+      el.style.width = "10px";
+      el.style.height = "10px";
+      markersRef.current[key] = new maplibregl.Marker({ element: el })
+        .setLngLat([signal.lng, signal.lat])
+        .addTo(map);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.incidentLat, hospital?._id, signals]);
+
+  // Ambulance marker — moves live as `ambulance.lat/lng` updates from the ticker.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ambulance) return;
+
+    if (!markersRef.current.ambulance) {
+      markersRef.current.ambulance = new maplibregl.Marker({
+        element: makeMarkerEl("#f5a623", ambulance.vehicleNumber, true),
+      })
+        .setLngLat([ambulance.lng, ambulance.lat])
+        .addTo(map);
+    } else {
+      markersRef.current.ambulance.setLngLat([ambulance.lng, ambulance.lat]);
+    }
+  }, [ambulance?.lat, ambulance?.lng]);
+
+  return (
+    <div className="relative h-[420px] w-full overflow-hidden rounded-xl border border-[var(--color-border)]">
+      <div ref={mapContainerRef} className="h-full w-full" />
+      <div className="absolute bottom-3 left-3 flex flex-col gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]/90 backdrop-blur-sm p-2.5 text-[11px] font-mono">
+        <LegendRow color="#e5484d" label="Incident" />
+        <LegendRow color="#f5a623" label="Ambulance (live)" />
+        <LegendRow color="#3b9fe0" label="Hospital" />
+        <LegendRow color="#3dd68c" label="Signal: green" />
+      </div>
+    </div>
+  );
+}
+
+function LegendRow({ color, label }: { color: string; label: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+      <span className="text-[var(--color-text-dim)]">{label}</span>
+    </div>
+  );
+}
+
+===== FILE: src\hooks\useSpeechRecognition.ts ===== 
+"use client";
+
+import { useState, useRef, useCallback, useEffect } from "react";
+
+interface UseSpeechRecognitionResult {
+  isSupported: boolean;
+  isListening: boolean;
+  transcript: string;
+  interimTranscript: string;
+  start: () => void;
+  stop: () => void;
+  reset: () => void;
+  error: string | null;
+}
+
+// Minimal ambient types for the Web Speech API (not in standard TS lib yet).
+type SpeechRecognitionResultEvent = Event & {
+  resultIndex: number;
+  results: {
+    length: number;
+    [index: number]: {
+      isFinal: boolean;
+      length: number;
+      [index: number]: { transcript: string };
+    };
+  };
+};
+type SpeechRecognitionInstance = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start: () => void;
+  stop: () => void;
+  onresult: ((event: SpeechRecognitionResultEvent) => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
+  onend: (() => void) | null;
+};
+
+export function useSpeechRecognition(): UseSpeechRecognitionResult {
+  const [isListening, setIsListening] = useState(false);
+  const [transcript, setTranscript] = useState("");
+  const [interimTranscript, setInterimTranscript] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isSupported, setIsSupported] = useState(false);
+  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+
+  useEffect(() => {
+    const w = window as unknown as {
+      SpeechRecognition?: new () => SpeechRecognitionInstance;
+      webkitSpeechRecognition?: new () => SpeechRecognitionInstance;
+    };
+    const SpeechRecognitionCtor = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+    setIsSupported(!!SpeechRecognitionCtor);
+  }, []);
+
+  const start = useCallback(() => {
+    const w = window as unknown as {
+      SpeechRecognition?: new () => SpeechRecognitionInstance;
+      webkitSpeechRecognition?: new () => SpeechRecognitionInstance;
+    };
+    const SpeechRecognitionCtor = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+
+    if (!SpeechRecognitionCtor) {
+      setError("Speech recognition isn't supported in this browser. Try Chrome or Edge.");
+      return;
+    }
+
+    setError(null);
+    const recognition = new SpeechRecognitionCtor();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-IN";
+
+    recognition.onresult = (event) => {
+      let finalChunk = "";
+      let interimChunk = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        const text = result[0].transcript;
+        if (result.isFinal) {
+          finalChunk += text + " ";
+        } else {
+          interimChunk += text;
+        }
+      }
+      if (finalChunk) {
+        setTranscript((prev) => (prev + " " + finalChunk).trim());
+      }
+      setInterimTranscript(interimChunk);
+    };
+
+    recognition.onerror = (event) => {
+      setError(event.error === "not-allowed" ? "Microphone access denied." : `Speech error: ${event.error}`);
+      setIsListening(false);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+    setIsListening(true);
+  }, []);
+
+  const stop = useCallback(() => {
+    recognitionRef.current?.stop();
+    setIsListening(false);
+  }, []);
+
+  const reset = useCallback(() => {
+    setTranscript("");
+    setInterimTranscript("");
+    setError(null);
+  }, []);
+
+  return { isSupported, isListening, transcript, interimTranscript, start, stop, reset, error };
+}
+
+===== FILE: components.json ===== 
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "base-nova",
+  "rsc": true,
+  "tsx": true,
+  "tailwind": {
+    "config": "",
+    "css": "src/app/globals.css",
+    "baseColor": "neutral",
+    "cssVariables": true,
+    "prefix": ""
+  },
+  "iconLibrary": "lucide",
+  "rtl": false,
+  "aliases": {
+    "components": "@/components",
+    "utils": "@/lib/utils",
+    "ui": "@/components/ui",
+    "lib": "@/lib",
+    "hooks": "@/hooks"
+  },
+  "menuColor": "default",
+  "menuAccent": "subtle",
+  "registries": {}
+}
+
+===== FILE: tsconfig.json ===== 
+{
+  "compilerOptions": {
+    /* Base Options: */
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "target": "es2022",
+    "allowJs": true,
+    "resolveJsonModule": true,
+    "moduleDetection": "force",
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+
+    /* Strictness */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "checkJs": true,
+
+    /* Bundled projects */
+    "lib": ["dom", "dom.iterable", "ES2022"],
+    "noEmit": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "preserve",
+    "plugins": [{ "name": "next" }],
+    "incremental": true,
+
+    /* Path Aliases */
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    "**/*.cjs",
+    "**/*.js",
+    ".next/types/**/*.ts"
+  ],
+  "exclude": ["node_modules", "generated"]
+}
+
