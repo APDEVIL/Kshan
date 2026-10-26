@@ -6,8 +6,8 @@
 
 /* ------------------------------------------------------------------ */
 /* Kshan design tokens. Light is the default (matches the reference    */
-/* bento dashboard). Dark mode is toggled with the .dark class, and    */
-/* the Ambulance theme with the .ambulance class.                      */
+/* bento dashboard). Dark mode is toggled with the .dark class, the   */
+/* Ambulance theme with .ambulance, and the cursor/lights with .k-fun. */
 /* ------------------------------------------------------------------ */
 :root {
 	color-scheme: light;
@@ -196,8 +196,8 @@
 	);
 }
 
-/* flashing red and blue light bar along the top edge */
-.ambulance body::before {
+/* flashing red and blue light bar along the top edge (only when ambulance effects are on) */
+.ambulance.k-fun body::before {
 	content: "";
 	position: fixed;
 	inset: 0 0 auto 0;
@@ -497,50 +497,58 @@
 }
 
 /* ------------------------------------------------------------------ */
-/* Ambulance mouse cursor. The hotspot (37, 18) is the front bumper.   */
+/* Ambulance mouse cursor, only when ambulance effects are on (.k-fun). */
+/* The hotspot (37, 18) is the front bumper.                            */
 /* ------------------------------------------------------------------ */
 :root {
 	--k-cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='32' viewBox='0 -4 40 32'%3E%3Crect x='1.5' y='5.5' width='24' height='15.5' rx='3' fill='%23fff' stroke='%231b2430' stroke-width='1.5'/%3E%3Cpath d='M25.5 9.5h7.4l5.1 5.2V21H25.5z' fill='%23fff' stroke='%231b2430' stroke-width='1.5' stroke-linejoin='round'/%3E%3Cpath d='M28.6 11.3h4l3 3.4h-7z' fill='%239fd3ff'/%3E%3Crect x='1.5' y='15.2' width='24' height='3' fill='%23d62839'/%3E%3Cpath d='M13.5 7.6v5.4M10.8 10.3h5.4' stroke='%23d62839' stroke-width='2.2' stroke-linecap='round'/%3E%3Crect x='10.5' y='1.6' width='6' height='3.6' rx='1.2' fill='%231f6feb' stroke='%231b2430' stroke-width='1'/%3E%3Ccircle cx='9' cy='22' r='3.4' fill='%231b2430'/%3E%3Ccircle cx='31' cy='22' r='3.4' fill='%231b2430'/%3E%3Ccircle cx='9' cy='22' r='1.3' fill='%23cfd6df'/%3E%3Ccircle cx='31' cy='22' r='1.3' fill='%23cfd6df'/%3E%3C/svg%3E");
 	--k-cursor-lit: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='32' viewBox='0 -4 40 32'%3E%3Ccircle cx='13.5' cy='3.2' r='5.2' fill='%23ff3347' fill-opacity='.28'/%3E%3Crect x='1.5' y='5.5' width='24' height='15.5' rx='3' fill='%23fff' stroke='%231b2430' stroke-width='1.5'/%3E%3Cpath d='M25.5 9.5h7.4l5.1 5.2V21H25.5z' fill='%23fff' stroke='%231b2430' stroke-width='1.5' stroke-linejoin='round'/%3E%3Cpath d='M28.6 11.3h4l3 3.4h-7z' fill='%239fd3ff'/%3E%3Crect x='1.5' y='15.2' width='24' height='3' fill='%23d62839'/%3E%3Cpath d='M13.5 7.6v5.4M10.8 10.3h5.4' stroke='%23d62839' stroke-width='2.2' stroke-linecap='round'/%3E%3Crect x='10.5' y='1.6' width='6' height='3.6' rx='1.2' fill='%23ff3347' stroke='%231b2430' stroke-width='1'/%3E%3Cpath d='M6.5 1.2 4.2 .2M20.5 1.2l2.3-1' stroke='%23ff3347' stroke-width='1.3' stroke-linecap='round'/%3E%3Ccircle cx='9' cy='22' r='3.4' fill='%231b2430'/%3E%3Ccircle cx='31' cy='22' r='3.4' fill='%231b2430'/%3E%3Ccircle cx='9' cy='22' r='1.3' fill='%23cfd6df'/%3E%3Ccircle cx='31' cy='22' r='1.3' fill='%23cfd6df'/%3E%3C/svg%3E");
 }
 @media (pointer: fine) {
-	html,
-	body {
+	html.k-fun,
+	html.k-fun body {
 		cursor: var(--k-cursor) 37 18, auto;
 	}
-	a,
-	button,
-	summary,
-	select,
-	label[for],
-	[role="button"],
-	[data-cursor],
-	input[type="range"],
-	input[type="checkbox"],
-	input[type="radio"] {
+	.k-fun a,
+	.k-fun button,
+	.k-fun summary,
+	.k-fun select,
+	.k-fun label[for],
+	.k-fun [role="button"],
+	.k-fun [data-cursor],
+	.k-fun input[type="range"],
+	.k-fun input[type="checkbox"],
+	.k-fun input[type="radio"] {
 		cursor: var(--k-cursor-lit) 37 18, pointer;
 	}
-	button:disabled,
-	[aria-disabled="true"] {
+	.k-fun button:disabled,
+	.k-fun [aria-disabled="true"] {
 		cursor: not-allowed;
 	}
-	input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
-	textarea {
+	.k-fun
+		input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+	.k-fun textarea {
 		cursor: text;
 	}
-	html .maplibregl-canvas-container.maplibregl-interactive:not(.maplibregl-track-pointer) {
+	html.k-fun
+		.maplibregl-canvas-container.maplibregl-interactive:not(
+			.maplibregl-track-pointer
+		) {
 		cursor: var(--k-cursor) 37 18, grab;
 	}
 }
 
-/* soft red/blue light that trails the cursor */
+/* soft light that trails the cursor: plain by default, red/blue flashing when effects are on */
 .k-siren-glow {
 	border-radius: 9999px;
 	filter: blur(10px);
+	background: color-mix(in oklab, var(--brand) 38%, transparent);
+}
+.k-fun .k-siren-glow {
 	mix-blend-mode: multiply;
 	animation: k-siren-glow 1s steps(1) infinite;
 }
-.dark .k-siren-glow {
+.dark.k-fun .k-siren-glow {
 	mix-blend-mode: screen;
 }
 @keyframes k-siren-glow {

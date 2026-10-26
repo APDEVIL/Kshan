@@ -1,4 +1,5 @@
 // Theme helpers. Three themes: light (default), dark, and ambulance (white, red and siren blue).
+// Separate from the theme: an "ambulance effects" switch (ambulance cursor + flashing lights), off by default.
 
 export type Theme = "light" | "dark" | "ambulance";
 
@@ -11,6 +12,7 @@ export const THEME_LABEL: Record<Theme, string> = {
 };
 
 export const THEME_KEY = "kshan-theme";
+export const FX_KEY = "kshan-fun";
 
 export function isTheme(value: unknown): value is Theme {
   return value === "light" || value === "dark" || value === "ambulance";
@@ -54,8 +56,26 @@ export function storeTheme(theme: Theme): void {
   }
 }
 
+/** Ambulance cursor and flashing lights. Off by default. */
+export function readFx(): boolean {
+  try {
+    return window.localStorage.getItem(FX_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function applyFx(on: boolean): void {
+  document.documentElement.classList.toggle("k-fun", on);
+  try {
+    window.localStorage.setItem(FX_KEY, on ? "1" : "0");
+  } catch {
+    // ignore
+  }
+}
+
 /**
- * Inline script for <head>, so the right theme is applied before first paint
+ * Inline script for <head>, so the right theme and effects setting are applied before first paint
  * (no flash on reload).
  */
-export const THEME_INIT_SCRIPT = `(function(){try{var t=localStorage.getItem("${THEME_KEY}");if(t!=="dark"&&t!=="ambulance"){t="light"}var c=document.documentElement.classList;c.toggle("dark",t==="dark");c.toggle("ambulance",t==="ambulance");document.documentElement.style.colorScheme=t==="dark"?"dark":"light"}catch(e){}})();`;
+export const THEME_INIT_SCRIPT = `(function(){try{var t=localStorage.getItem("${THEME_KEY}");if(t!=="dark"&&t!=="ambulance"){t="light"}var c=document.documentElement.classList;c.toggle("dark",t==="dark");c.toggle("ambulance",t==="ambulance");c.toggle("k-fun",localStorage.getItem("${FX_KEY}")==="1");document.documentElement.style.colorScheme=t==="dark"?"dark":"light"}catch(e){}})();`;
