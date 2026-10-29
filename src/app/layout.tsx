@@ -1,10 +1,7 @@
 import type { Metadata, Viewport } from "next";
-import {
-	JetBrains_Mono,
-	Noto_Sans_Devanagari,
-	Noto_Sans_Kannada,
-	Plus_Jakarta_Sans,
-} from "next/font/google";
+import { JetBrains_Mono, Plus_Jakarta_Sans } from "next/font/google";
+import "@fontsource-variable/noto-sans-devanagari";
+import "@fontsource-variable/noto-sans-kannada";
 import "./globals.css";
 import { Providers } from "@/components/providers/Providers";
 import { BRAND } from "@/lib/brand";
@@ -14,19 +11,6 @@ import { cn } from "@/lib/utils";
 const jakarta = Plus_Jakarta_Sans({
 	subsets: ["latin"],
 	variable: "--font-jakarta",
-	display: "swap",
-});
-// Kannada and Devanagari so the call transcript renders properly when the caller speaks Kannada or Hindi.
-const kannada = Noto_Sans_Kannada({
-	subsets: ["kannada"],
-	weight: ["400", "500", "600", "700"],
-	variable: "--font-kannada",
-	display: "swap",
-});
-const devanagari = Noto_Sans_Devanagari({
-	subsets: ["devanagari"],
-	weight: ["400", "500", "600", "700"],
-	variable: "--font-devanagari",
 	display: "swap",
 });
 const jetbrains = JetBrains_Mono({
@@ -54,13 +38,7 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
 	return (
 		<html
-			className={cn(
-				"h-full",
-				jakarta.variable,
-				kannada.variable,
-				devanagari.variable,
-				jetbrains.variable,
-			)}
+			className={cn("h-full", jakarta.variable, jetbrains.variable)}
 			lang="en"
 			suppressHydrationWarning
 		>
