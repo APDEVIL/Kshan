@@ -144,19 +144,19 @@ export const departForHospital = mutation({
 	},
 });
 
-/** ERO changes how fast the demo runs (1 = real time). */
+/** ERO changes how fast the demo runs (1 = real time). Remembered on the ambulance for later legs. */
 export const setSimSpeed = mutation({
-	args: { ambulanceId: v.id("ambulances"), multiplier: v.number() },
-	handler: async (ctx, args): Promise<void> => {
-		const m = Math.max(1, Math.min(30, args.multiplier));
-		const routes = await ctx.db
-			.query("routes")
-			.withIndex("by_ambulance_status", (q) =>
-				q.eq("ambulanceId", args.ambulanceId).eq("status", "active"),
-			)
-			.collect();
-		for (const r of routes) await ctx.db.patch(r._id, { multiplier: m });
-	},
+  args: { ambulanceId: v.id("ambulances"), multiplier: v.number() },
+  handler: async (ctx, args): Promise<void> => {
+    const m = Math.max(1, Math.min(30, args.multiplier));
+    // remember the choice on the ambulance, so it also applies to the next leg and after the mission ends
+    await ctx.db.patch(args.ambulanceId, { simMultiplier: m });
+    const routes = await ctx.db
+      .query("routes")
+      .withIndex("by_ambulance_status", (q) => q.eq("ambulanceId", args.ambulanceId).eq("status", "active"))
+      .collect();
+    for (const r of routes) await ctx.db.patch(r._id, { multiplier: m });
+  },
 });
 
 /** DEPRECATED: movement is server-side now. Kept so the old UI compiles. */

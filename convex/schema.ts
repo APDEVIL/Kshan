@@ -57,6 +57,7 @@ export default defineSchema({
 		),
 		currentSessionId: v.optional(v.id("sessions")),
 		equipmentLevel: v.union(v.literal("basic"), v.literal("advanced")),
+		 simMultiplier: v.optional(v.number()), // demo speed chosen by the ERO, kept across legs
 	})
 		.index("by_status", ["status"])
 		.index("by_city_status", ["city", "status"]),

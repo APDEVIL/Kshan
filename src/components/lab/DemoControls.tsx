@@ -20,14 +20,14 @@ export function DemoControls() {
   const reseed = useMutation(api.seed.reseedAll);
   const [confirming, setConfirming] = useState(false);
   const ambulanceId = snapshot?.ambulance?._id;
-  const current = snapshot?.route?.multiplier;
+  const current = snapshot?.ambulance?.simMultiplier ?? snapshot?.route?.multiplier ?? TIMING.demoSpeedMultiplier;
 
   return (
     <Panel title="Demo controls">
       <div className="space-y-4">
         <div>
           <p className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-            <Gauge className="size-4" /> Ambulance speed {current ? `(now ${current}x)` : `(default ${TIMING.demoSpeedMultiplier}x)`}
+            <Gauge className="size-4" /> Ambulance speed (now {current}x)
           </p>
           <div className="flex flex-wrap gap-2">
             {SPEEDS.map((m) => (

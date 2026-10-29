@@ -223,7 +223,7 @@ export const saveRoute = internalMutation({
 			traveledM: 0,
 			durationS: args.durationS,
 			speedKmh: SPEED_KMH,
-			multiplier: DEMO_SPEED_MULTIPLIER,
+			      multiplier: amb.simMultiplier ?? DEMO_SPEED_MULTIPLIER,
 			lastTickAt: now,
 			status: "active",
 			source: args.source,
