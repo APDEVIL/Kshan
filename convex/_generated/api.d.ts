@@ -14,6 +14,7 @@ import type * as demoData from "../demoData.js";
 import type * as directory from "../directory.js";
 import type * as dispatch from "../dispatch.js";
 import type * as geo from "../geo.js";
+import type * as hazards from "../hazards.js";
 import type * as intakeAgent from "../intakeAgent.js";
 import type * as lib from "../lib.js";
 import type * as llm from "../llm.js";
@@ -42,6 +43,7 @@ declare const fullApi: ApiFromModules<{
   directory: typeof directory;
   dispatch: typeof dispatch;
   geo: typeof geo;
+  hazards: typeof hazards;
   intakeAgent: typeof intakeAgent;
   lib: typeof lib;
   llm: typeof llm;

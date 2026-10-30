@@ -22,6 +22,21 @@ function secondsBetween(from: number, to: number | undefined): number | null {
   return to === undefined ? null : round1((to - from) / 1000);
 }
 
+/** Pothole numbers for the driver: how many are still ahead, how soon, and an overall risk level. */
+function hazardSummary(hazards: { posM: number; severity: number }[], traveledM: number) {
+  const ahead = hazards.filter((h) => h.posM > traveledM).sort((a, b) => a.posM - b.posM);
+  const next = ahead[0];
+  const score = ahead.reduce((sum, h) => sum + h.severity, 0);
+  return {
+    potholesTotal: hazards.length,
+    potholesAhead: ahead.length,
+    severeAhead: ahead.filter((h) => h.severity >= 3).length,
+    nextPotholeM: next ? Math.max(0, Math.round(next.posM - traveledM)) : null,
+    nextPotholeSeverity: next?.severity ?? null,
+    roadRisk: (score >= 20 ? "high" : score >= 8 ? "medium" : "low") as "low" | "medium" | "high",
+  };
+}
+
 /** Everything one screen needs about a session, in a single reactive query. */
 export const getSessionSnapshot = query({
   args: { sessionId: v.id("sessions"), role: v.optional(v.string()) },
@@ -214,6 +229,7 @@ export const getSessionSnapshot = query({
             durationS: route.durationS,
             multiplier: route.multiplier,
             junctions: route.signals.length,
+            ...hazardSummary(route.hazards ?? [], route.traveledM),
           }
         : null,
 

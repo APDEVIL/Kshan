@@ -230,6 +230,9 @@ export default defineSchema({
 		),
 		source: v.union(v.literal("osrm"), v.literal("fallback")),
 		signals: v.array(v.object({ signalId: v.id("signals"), posM: v.number() })),
+		hazards: v.optional(
+      v.array(v.object({ posM: v.number(), lat: v.number(), lng: v.number(), severity: v.number() })),
+    ),
 		createdAt: v.number(),
 	})
 		.index("by_session", ["sessionId"])
